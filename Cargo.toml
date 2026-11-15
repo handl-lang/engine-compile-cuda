@@ -14,8 +14,13 @@ name = "compile-cuda"
 path = "src/main.rs"
 
 [dependencies]
-compile-triton = { path = "../compile-triton" }
+compile-triton = { git = "https://github.com/handl-lang/compile-triton", branch = "main" }
 serde_json = "1"
 
 [dev-dependencies]
 serde_json = "1"
+
+# dev-link: begin
+[patch."https://github.com/handl-lang/compile-triton"]
+compile-triton = { path = "../compile-triton" }
+# dev-link: end
