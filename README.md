@@ -23,14 +23,31 @@ float, double, half, bfloat16, int32, int64.
 
 ## Coverage — honest scope
 
-Lowered: the ADR-0171 elementwise/layout fragment — `store(body, out)`
-over `mul`, `sub`, `neg`, `relu`, `exp`, `sigmoid`, `tanh`, `gelu`,
-`silu`, `bias`, with `transpose`/`permute`/`tile_load`/`pipeline` as
-views and identities.
+Two fragments lower; everything else is declined **by name** (error,
+never a stub).
 
-Declined **by name** (error, never a stub): the qgemv ops — `dot`,
-`dequant`, `unpack_i4`, `split`, `stage`, `reduce`. Batched GEMM /
-attention is the measured wall in the coverage census
+**Elementwise/layout** (ADR-0171): `store(body, out)` over `mul`,
+`sub`, `neg`, `relu`, `exp`, `sigmoid`, `tanh`, `gelu`, `silu`,
+`bias`, with `transpose`/`permute`/`tile_load`/`pipeline` as views and
+identities.
+
+**Contract / qgemv** (ADR-0165/0166): `store(body, out)` where `body`
+is `dot`, `split` of a dot, `reduce` of dot partials, and `bias`
+wrappers, in any `pipeline`/`stage` nesting. Each dot's left operand is
+either a leaf/view-chain `[k, n]` tile or the AWQ spelling
+`dequant(unpack_i4(w[k, n/8], shifts[8]), z[g, n], s[g, n], group)`
+with `kind:"g"` leaves (`g = k / div` per element — the denotation's
+`repeat_interleave`). One fused kernel accumulates in fp32 — the
+compute type `dot`/`stage`/`reduce` all denote — and casts on store;
+`split`'s k literal is checked against `geom` at launch. This is the
+`qgemv()` term `lib-kernel-ir` emits, lowered for real.
+
+Still declined **by name**: `dequant`/`unpack_i4` outside a dot lhs
+(they denote materialised tiles this crate doesn't stage), `reduce`
+partials that aren't dots, `split` of a non-dot body (a k-axis
+reduction whose k axis can't be identified from the term alone), and
+`dot` over a computed tile. Batched GEMM / attention is the measured
+wall in the coverage census
 (`graphopt:docs/reports/kernel_ir_coverage.md`); this crate does not
 claim it. A `transpose`/`permute` over a *computed* tile is also
 refused — a view of non-leaf data has no stride-only transcription.
@@ -38,7 +55,7 @@ refused — a view of non-leaf data has no stride-only transcription.
 ## Develop
 
 ```bash
-cargo test                 # tests/codegen_test.rs — emitted-source contract
+cargo test                 # tests/{codegen,contract}_test.rs — emitted-source contract
 cargo run --quiet -- < term.json > k.cu
 nvcc -c k.cu -o k.o        # if a CUDA toolkit is installed (not required)
 bash ci.sh                 # the bupha gate: cargo check + cargo test

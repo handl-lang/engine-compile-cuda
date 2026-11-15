@@ -442,7 +442,7 @@ fn expr_key(e: &Expr, s: &mut String) {
     }
 }
 
-fn fnv1a(s: &str) -> String {
+pub(crate) fn fnv1a(s: &str) -> String {
     let mut h: u64 = 0xcbf29ce484222325;
     for b in s.as_bytes() {
         h ^= u64::from(*b);

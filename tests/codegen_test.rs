@@ -153,11 +153,10 @@ fn kernel_and_launcher_names_are_stable_and_distinct() {
 
 #[test]
 fn declines_qgemv_ops_by_name() {
-    // a dot term is the packed-qgemv fragment — no CUDA lowering exists
-    let dot = r#"{"op":"dot","args":[{"leaf":{"name":"a"}},{"leaf":{"name":"x"}}]}"#;
-    let err = compile(&parse(&elem_term(dot))).unwrap_err();
-    assert!(err.contains("dot"), "{err}");
-
+    // the remaining qgemv-only spellings have no standalone CUDA
+    // lowering: dequant/unpack_i4 outside a dot denote materialised
+    // tiles, and bare reduce/split/stage with no dot body are not
+    // contract terms. `dot` itself now lowers — see contract_test.rs.
     for op in ["dequant", "unpack_i4", "reduce", "split", "stage"] {
         let body = format!(r#"{{"op":"{op}","args":[]}}"#);
         let err = compile(&parse(&elem_term(&body))).unwrap_err();

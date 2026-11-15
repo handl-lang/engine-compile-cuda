@@ -6,7 +6,7 @@ use compile_cuda::{compile, Node};
 
 fn main() -> std::process::ExitCode {
     let mut args = std::env::args().skip(1);
-    while let Some(flag) = args.next() {
+    if let Some(flag) = args.next() {
         eprintln!("unknown flag {flag}");
         return std::process::ExitCode::FAILURE;
     }
