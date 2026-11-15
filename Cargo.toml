@@ -1,0 +1,21 @@
+[package]
+name = "compile-cuda"
+version = "0.0.1"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Lower kernel IR terms to CUDA C++ source (ADR-0171 fragment)"
+
+[lib]
+name = "compile_cuda"
+path = "src/lib.rs"
+
+[[bin]]
+name = "compile-cuda"
+path = "src/main.rs"
+
+[dependencies]
+compile-triton = { path = "../compile-triton" }
+serde_json = "1"
+
+[dev-dependencies]
+serde_json = "1"
