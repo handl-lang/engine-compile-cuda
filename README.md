@@ -1,8 +1,7 @@
 # compile-cuda
 
-Lowers a kernel IR `Term` (ADR-0171 fragment, `lib-kernel-ir`) to CUDA C++
-source: one templated `__global__` kernel plus an `extern "C"` launcher,
-all real CUDA — no pseudocode.
+Lowers a kernel IR `Term` to CUDA C++ source: one templated `__global__`
+kernel plus an `extern "C"` launcher, all real CUDA — no pseudocode.
 
 The term is the input, the source is the output, and neither is a
 template someone edited by hand for one shape:
@@ -26,12 +25,12 @@ float, double, half, bfloat16, int32, int64.
 Two fragments lower; everything else is declined **by name** (error,
 never a stub).
 
-**Elementwise/layout** (ADR-0171): `store(body, out)` over `mul`,
+**Elementwise/layout**: `store(body, out)` over `mul`,
 `sub`, `neg`, `relu`, `exp`, `sigmoid`, `tanh`, `gelu`, `silu`,
 `bias`, with `transpose`/`permute`/`tile_load`/`pipeline` as views and
 identities.
 
-**Contract / qgemv** (ADR-0165/0166): `store(body, out)` where `body`
+**Contract / qgemv**: `store(body, out)` where `body`
 is `dot`, `split` of a dot, `reduce` of dot partials, and `bias`
 wrappers, in any `pipeline`/`stage` nesting. Each dot's left operand is
 either a leaf/view-chain `[k, n]` tile or the AWQ spelling
@@ -47,22 +46,24 @@ Still declined **by name**: `dequant`/`unpack_i4` outside a dot lhs
 partials that aren't dots, `split` of a non-dot body (a k-axis
 reduction whose k axis can't be identified from the term alone), and
 `dot` over a computed tile. Batched GEMM / attention is the measured
-wall in the coverage census
-(`graphopt:docs/reports/kernel_ir_coverage.md`); this crate does not
+wall in the coverage census; this crate does not
 claim it. A `transpose`/`permute` over a *computed* tile is also
 refused — a view of non-leaf data has no stride-only transcription.
 
-## Develop
+## Development
 
 ```bash
-cargo test                 # tests/{codegen,contract}_test.rs — emitted-source contract
+cargo xtask gate        # fmt --check → clippy -D warnings → test → doc
 cargo run --quiet -- < term.json > k.cu
-nvcc -c k.cu -o k.o        # if a CUDA toolkit is installed (not required)
-bash ci.sh                 # the bupha gate: cargo check + cargo test
+nvcc -c k.cu -o k.o     # if a CUDA toolkit is installed (not required)
 ```
 
 Tests are structural (kernel signature, launch config, dtype dispatch,
 no unsupported op silently dropped) plus an `nvcc -c` syntax check that
 skips honestly when no CUDA toolkit is present. No GPU execution in CI.
+`ci.sh` is the gate entry. Deps resolve from git, so no sibling
+checkouts are needed; a plain clone test-runs as-is.
 
-Dual-licensed MIT OR Apache-2.0 — see `LICENSE-MIT` / `LICENSE-APACHE`.
+## License
+
+MIT.
