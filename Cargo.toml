@@ -2,7 +2,7 @@
 name = "compile-cuda"
 version = "0.0.1"
 edition = "2021"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 description = "Lower kernel IR terms to CUDA C++ source (ADR-0171 fragment)"
 repository = "https://github.com/handl-lang/compile-cuda"
 readme = "README.md"
