@@ -4,7 +4,7 @@ version = "0.0.1"
 edition = "2021"
 license = "MIT"
 description = "Lower kernel IR terms to CUDA C++ source (ADR-0171 fragment)"
-repository = "https://github.com/handl-lang/compile-cuda"
+repository = "https://github.com/handl-lang/engine-compile-cuda"
 readme = "README.md"
 keywords = ["handl", "cuda", "gpu", "compiler"]
 categories = ["compilers", "science"]
@@ -26,5 +26,5 @@ serde_json = "1"
 
 # dev-link: begin
 [patch."https://github.com/handl-lang/compile-triton"]
-compile-triton = { path = "../compile-triton" }
+compile-triton = { path = "../engine-compile-triton" }
 # dev-link: end
