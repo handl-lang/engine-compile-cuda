@@ -53,7 +53,7 @@ refused — a view of non-leaf data has no stride-only transcription.
 ## Development
 
 ```bash
-cargo xtask gate        # fmt --check → clippy -D warnings → test → doc
+cargo run --manifest-path xtask/Cargo.toml -- gate   # fmt → clippy → test → doc
 cargo run --quiet -- < term.json > k.cu
 nvcc -c k.cu -o k.o     # if a CUDA toolkit is installed (not required)
 ```
@@ -61,8 +61,11 @@ nvcc -c k.cu -o k.o     # if a CUDA toolkit is installed (not required)
 Tests are structural (kernel signature, launch config, dtype dispatch,
 no unsupported op silently dropped) plus an `nvcc -c` syntax check that
 skips honestly when no CUDA toolkit is present. No GPU execution in CI.
-`ci.sh` is the gate entry. Deps resolve from git, so no sibling
-checkouts are needed; a plain clone test-runs as-is.
+`xtask/` provides the gate tasks (`fmt`, `clippy`, `test`, `doc`, `check`,
+`gate`); `ci.sh` is the same gate entry for the bupha shell runner. Deps
+are git deps on `branch = "main"`; locally the workspace-root
+`.cargo/config.toml` patches them to sibling checkouts (dev-only, never
+committed).
 
 ## License
 
