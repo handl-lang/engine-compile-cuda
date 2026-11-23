@@ -19,9 +19,21 @@ path = "src/lib.rs"
 name = "compile-cuda"
 path = "src/main.rs"
 
+[[bin]]
+name = "kernel-lower"
+path = "src/bin/kernel-lower.rs"
+
 [dependencies]
-compile-triton = { git = "https://github.com/handl-lang/engine-compile-triton", branch = "main" }
+# Path dep, not git: `KernelTerm`/`TritonEmitter` (PL-004 T-094) live in
+# the sibling checkout and are not yet pushed — a git dep would build
+# a compile-triton without them. Revisit when engine-compile-triton is
+# tagged.
+compile-triton = { path = "../engine-compile-triton" }
 serde_json = "1"
+base64 = "0.22"
+# Desired-state kernel: `CudaEmitter` implements `Emitter<KernelTerm>`
+# (PL-004 T-094). Path dep — engine-codegen has no git remote yet.
+hnl-engine-codegen = { path = "../engine-codegen" }
 
 [dev-dependencies]
 serde_json = "1"

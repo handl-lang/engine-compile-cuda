@@ -29,11 +29,14 @@
 
 pub mod codegen;
 pub mod contract;
+pub mod kernel_term;
 
 pub use codegen::emit;
 pub use compile_triton::as_elementwise;
 pub use compile_triton::term::Node;
+pub use compile_triton::{KernelTerm, TritonEmitter};
 pub use contract::{as_contract, emit_contract, Contract, Dot};
+pub use kernel_term::CudaEmitter;
 
 /// Compile a parsed term to CUDA C++ source, or say precisely why not.
 ///
