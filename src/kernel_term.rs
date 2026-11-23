@@ -15,7 +15,7 @@
 
 use compile_triton::kernel_term::artifact_name;
 use compile_triton::KernelTerm;
-use hnl_engine_codegen::{Change, CodegenError, EmitContext, Emitter};
+use hnl_tool_codegen::{Change, CodegenError, EmitContext, Emitter};
 
 use crate::compile;
 

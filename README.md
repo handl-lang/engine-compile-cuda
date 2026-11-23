@@ -1,4 +1,4 @@
-# engine-compile-cuda
+# tool-compile-cuda
 
 Lowers a kernel IR `Term` to CUDA C++ source: one templated `__global__`
 kernel plus an `extern "C"` launcher, all real CUDA — no pseudocode.

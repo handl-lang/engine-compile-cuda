@@ -32,7 +32,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use base64::Engine as _;
 use compile_cuda::{CudaEmitter, KernelTerm, TritonEmitter};
 use compile_triton::artifact_name;
-use hnl_engine_codegen::{Change, ContentHash, EmitContext, Emitter};
+use hnl_tool_codegen::{Change, ContentHash, EmitContext, Emitter};
 use serde_json::{json, Value};
 
 const GENERATOR_NAME: &str = "mlopt-kernel-lower";
