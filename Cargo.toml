@@ -24,11 +24,11 @@ name = "kernel-lower"
 path = "src/bin/kernel-lower.rs"
 
 [dependencies]
-# Path dep, not git: `KernelTerm`/`TritonEmitter` (PL-004 T-094) live in
-# the sibling checkout and are not yet pushed — a git dep would build
-# a compile-triton without them. Revisit when engine-compile-triton is
-# tagged.
-compile-triton = { path = "../engine-compile-triton" }
+# `KernelTerm`/`TritonEmitter` (PL-004 T-094) now live upstream on
+# engine-compile-triton main (a01608c), so a git dep resolves — the
+# sibling checkout wins via `[patch]`. No tag exists yet; flip to a tag
+# pin when one is cut.
+compile-triton = { git = "https://github.com/handl-lang/engine-compile-triton", branch = "main" }
 serde_json = "1"
 base64 = "0.22"
 # Desired-state kernel: `CudaEmitter` implements `Emitter<KernelTerm>`
@@ -42,3 +42,6 @@ serde_json = "1"
 # the `branch = "main"` git deps.
 [patch."https://github.com/handl-lang/engine-codegen"]
 hnl-engine-codegen = { path = "../engine-codegen" }
+
+[patch."https://github.com/handl-lang/engine-compile-triton"]
+compile-triton = { path = "../engine-compile-triton" }
