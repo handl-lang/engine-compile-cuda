@@ -1,7 +1,8 @@
 [package]
 name = "compile-cuda"
 version = "0.0.1"
-edition = "2021"
+edition = "2024"
+rust-version = "1.85"
 license = "MIT"
 description = "Lower kernel IR terms to CUDA C++ source (ADR-0171 fragment)"
 repository = "https://github.com/handl-lang/tool-compile-cuda"
@@ -38,10 +39,6 @@ hnl-tool-codegen = { git = "https://github.com/handl-lang/tool-codegen", branch 
 [dev-dependencies]
 serde_json = "1"
 
-# ADR-0128 §Resolution: the sibling checkout wins locally; CI resolves
-# the `branch = "main"` git deps.
-[patch."https://github.com/handl-lang/tool-codegen"]
-hnl-tool-codegen = { path = "../tool-codegen" }
-
-[patch."https://github.com/handl-lang/tool-compile-triton"]
-compile-triton = { path = "../tool-compile-triton" }
+# No `[patch]` tables here: committed manifests must resolve from git
+# alone (engine-public-readiness D7). The sibling checkouts win locally
+# through the workspace-root `.cargo/config.toml` `[patch]` table.

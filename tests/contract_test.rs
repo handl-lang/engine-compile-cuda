@@ -1,7 +1,7 @@
 //! Structural tests for the contract lowering (`dot` / `split` /
 //! `reduce` — the qgemv fragment): emitted-source pins only, no GPU.
 
-use compile_cuda::{as_contract, compile, emit_contract, Node};
+use compile_cuda::{Node, as_contract, compile, emit_contract};
 
 fn leaf(name: &str) -> String {
     format!(r#"{{"leaf":{{"name":"{name}"}}}}"#)
@@ -25,7 +25,7 @@ fn parse(raw: &str) -> Node {
 
 fn emit_contract_term(body: &str) -> String {
     let c = as_contract(&parse(&store(body))).expect("contract term");
-    emit_contract(&c)
+    emit_contract(&c).expect("a recognised contract emits")
 }
 
 /// The AWQ qgemv body: dot(dequant(unpack_i4(w, shifts), z, s, g), x)
@@ -66,16 +66,24 @@ fn plain_dot_lowers_to_a_matvec_kernel() {
     ] {
         assert!(src.contains(case), "missing {case}");
     }
+    // block > 1024 is a launch-config error, not a silent clamp
+    assert!(src.contains("block > 1024u"), "{src}");
     // grid-stride over nout, serial k accumulation in fp32
     assert!(src.contains("i += gstride"));
     assert!(src.contains("i < nout"));
-    assert!(src.contains("k < klen"));
+    assert!(src.contains("k < klen0"), "{src}");
     assert!(src.contains("float acc = 0.0f"));
     assert!(src.contains("to_f32"));
     assert!(src.contains("store_cast<T>"));
     // stride-described loads: k*ak + i*an for the tile, k*kx for x
     assert!(src.contains("a0[k*ak0 + i*an0]"), "{src}");
     assert!(src.contains("x0[k*kx0]"), "{src}");
+    // the dot's geom block leads with its own klen
+    assert!(src.contains("k < klen0"), "{src}");
+    assert!(src.contains("geom[1] /* klen0 */"), "{src}");
+    assert!(src.contains("geom[4] /* kx0 */"), "{src}");
+    // the IR carries no alias information — no __restrict__ anywhere
+    assert!(!src.contains("__restrict__"), "{src}");
     // the transpose view is documented, not silently dropped
     assert!(src.contains("transpose(0,1)"));
     // in_ptrs order is documented
@@ -97,10 +105,10 @@ fn split_k_term_lowers_and_checks_the_k_literal() {
     let src = emit_contract_term(&body);
     assert!(src.contains("contract_kernel_"));
     assert!(
-        src.contains("if (klen != 512) return cudaErrorInvalidValue;"),
+        src.contains("if (geom[1] != 512) return cudaErrorInvalidValue;"),
         "{src}"
     );
-    assert!(src.contains("k < klen"));
+    assert!(src.contains("k < klen0"), "{src}");
 }
 
 #[test]
@@ -117,11 +125,11 @@ fn the_full_qgemv_spelling_lowers() {
     assert!(src.contains("k / zdiv0"), "{src}");
     assert!(src.contains("k / sdiv0"), "{src}");
     // packed w / shifts / zero z are int operands; s / x are T
-    assert!(src.contains("const int* __restrict__ w0"), "{src}");
-    assert!(src.contains("const int* __restrict__ sh0"), "{src}");
-    assert!(src.contains("const int* __restrict__ z0"), "{src}");
-    assert!(src.contains("const T* __restrict__ s0"), "{src}");
-    assert!(src.contains("const T* __restrict__ x0"), "{src}");
+    assert!(src.contains("const int* w0"), "{src}");
+    assert!(src.contains("const int* sh0"), "{src}");
+    assert!(src.contains("const int* z0"), "{src}");
+    assert!(src.contains("const T* s0"), "{src}");
+    assert!(src.contains("const T* x0"), "{src}");
     // geom carries the ten-stride dequant block
     for s in [
         "wk0", "wn0", "zg0", "zn0", "zdiv0", "sg0", "sn0", "sdiv0", "shs0", "kx0",
@@ -135,7 +143,7 @@ fn the_full_qgemv_spelling_lowers() {
     assert!(src.contains("in_ptrs[3] = dot 0 s \"s\""));
     assert!(src.contains("in_ptrs[4] = dot 0 x \"x\""));
     // the k literal is still checked
-    assert!(src.contains("if (klen != 512)"), "{src}");
+    assert!(src.contains("if (geom[1] != 512)"), "{src}");
 }
 
 #[test]
@@ -157,6 +165,14 @@ fn reduce_of_dot_partials_sums_into_one_kernel() {
     assert!(src.contains("b0[i*bs0]"), "{src}");
     assert!(src.contains("in_ptrs[4] = bias 0 \"bias\""));
     assert_eq!(src.matches("float acc = 0.0f").count(), 1);
+    // each dot's geom block leads with its own klen — dots in a
+    // reduce may contract different k axes (dot1 block: klen1,ak1,
+    // an1,kx1 at geom[5..9), bias bs0 at geom[9])
+    assert!(src.contains("k < klen0"), "{src}");
+    assert!(src.contains("k < klen1"), "{src}");
+    assert!(src.contains("geom[5] /* klen1 */"), "{src}");
+    assert!(src.contains("geom[8] /* kx1 */"), "{src}");
+    assert!(src.contains("geom[9] /* bs0 */"), "{src}");
 }
 
 #[test]
@@ -168,8 +184,8 @@ fn mixed_plain_and_dequant_dots_compose() {
     assert!(src.contains("& 0xF"), "{src}");
     // geom: 3 plain strides then 10 dequant strides
     assert!(src.contains("geom[4] /* kx0 */"), "{src}");
-    assert!(src.contains("geom[5] /* wk1 */"), "{src}");
-    assert!(src.contains("geom[14] /* kx1 */"), "{src}");
+    assert!(src.contains("geom[6] /* wk1 */"), "{src}");
+    assert!(src.contains("geom[15] /* kx1 */"), "{src}");
 }
 
 #[test]
@@ -234,7 +250,7 @@ fn elementwise_terms_still_take_the_elementwise_path() {
     let body = format!(r#"{{"op":"mul","args":[{},{}]}}"#, leaf("a"), leaf("b"));
     let node = parse(&store(&body));
     let e = compile_cuda::as_elementwise(&node).expect("elementwise");
-    let src = compile_cuda::emit(&e);
+    let src = compile_cuda::emit(&e).expect("elementwise emits");
     assert!(src.contains("elem_kernel_"), "{src}");
     assert!(!src.contains("contract_kernel_"));
 }

@@ -31,9 +31,9 @@
 //! fused kernel computes the whole contraction in one launch, which is
 //! the same denotation (the partial sums of a partition are summed
 //! anyway; reassociation is inside the ROUNDS grade). The `split`
-//! literal `k` is checked against the caller-packed `geom` k-length at
-//! launch — a mismatch is `cudaErrorInvalidValue`, never a silent
-//! wrong answer.
+//! literal `k` is checked against the caller-packed `geom` klen of the
+//! (single) dot at launch — a mismatch is `cudaErrorInvalidValue`,
+//! never a silent wrong answer.
 //!
 //! `stage` unwraps transparently anywhere inside the contract body
 //! (it denotes an fp32 materialisation the fused kernel already
@@ -42,13 +42,15 @@
 //! ## Wire contract
 //!
 //! `geom` (all `long long`):
-//! `[nout, klen, <per-dot stride block>..., <per-bias stride>...]`
-//! where a plain dot contributes `(ak, an, kx)` — k-stride, n-stride of
-//! the `[k,n]` tile, k-stride of `x`; a dequant dot contributes
-//! `(wk, wn, zg, zn, zdiv, sg, sn, sdiv, shs, kx)`; each bias
-//! contributes `(bs)`. `in_ptrs` order is the kernel's pointer
-//! parameter order: per dot `a, x` (plain) or `w, shifts, z, s, x`
-//! (dequant), then each bias operand; `out_ptr` is separate.
+//! `[nout, <per-dot stride block>..., <per-bias stride>...]`
+//! where each dot's block *leads* with its own `klen` — the dots in a
+//! `reduce` may contract different k axes, so k is per-dot, not
+//! global: a plain dot contributes `(klen, ak, an, kx)` — k-stride,
+//! n-stride of the `[k,n]` tile, k-stride of `x`; a dequant dot
+//! contributes `(klen, wk, wn, zg, zn, zdiv, sg, sn, sdiv, shs, kx)`;
+//! each bias contributes `(bs)`. `in_ptrs` order is the kernel's
+//! pointer parameter order: per dot `a, x` (plain) or `w, shifts, z,
+//! s, x` (dequant), then each bias operand; `out_ptr` is separate.
 //!
 //! Strides are *effective* (post-view) element strides computed by the
 //! caller with `cuda_emit_host::contract_strides2` / `_strides1`,
@@ -68,17 +70,29 @@ use crate::codegen::fnv1a;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Dot {
     /// `dot(tile[k,n], x[k])` — the tile is a leaf/view-chain operand.
-    Plain { tile: Operand, x: Operand },
+    Plain {
+        /// the `[k, n]` weight tile operand (leaf + views).
+        tile: Operand,
+        /// the `[k]` activation operand (leaf + views).
+        x: Operand,
+    },
     /// `dot(dequant(unpack_i4(w, shifts), z, s, group), x)` — the AWQ
     /// qgemv tile. `z_div`/`s_div` are the leaves' `div` (k-elements
     /// per g-row).
     Dequant {
+        /// packed `[k, n/8]` int32 weights operand.
         w: Operand,
+        /// the 8 nibble-shift values operand (int32, rank-1).
         shifts: Operand,
+        /// `[g, n]` zero-point operand, `kind:"g"` with `div` = z_div.
         z: Operand,
+        /// `[g, n]` scale operand, `kind:"g"` with `div` = s_div.
         s: Operand,
+        /// the `[k]` activation operand (leaf + views).
         x: Operand,
+        /// k-elements per z row (`g = k / z_div` per element).
         z_div: i64,
+        /// k-elements per s row (`g = k / s_div` per element).
         s_div: i64,
     },
 }
@@ -87,11 +101,12 @@ pub enum Dot {
 /// kernel computing `sum_j dot_j[n] + sum_b bias_b[n]`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Contract {
+    /// the matvec partials summed into the `[n]` output, in term order.
     pub dots: Vec<Dot>,
     /// rank-1 `[n]` bias operands (outermost bias peeled first).
     pub biases: Vec<Operand>,
     /// the `split` k literal, when the term spelled one — checked
-    /// against `geom`'s klen at launch.
+    /// against `geom`'s dot-0 klen at launch.
     pub k_literal: Option<i64>,
 }
 
@@ -269,6 +284,10 @@ fn dequant_dot(node: &Node, x: Operand) -> Result<Dot, String> {
     if group <= 0 {
         return Err(format!("group must be positive, got {group}"));
     }
+    // `group` itself is not emitted: the IR denotation passes it to
+    // `_dequant` only for its error message — the actual indexing is
+    // the `kind:"g"` leaves' `div` (`repeat_interleave`), which the
+    // kernel reads per element as `g = k / div`.
 
     // q must be unpack_i4(w, shifts), modulo pass-through wrappers.
     let q = unwrap_sched(&args[0])?;
@@ -376,13 +395,13 @@ fn leaf_views(node: &Node) -> Result<(String, Vec<View>, String, i64), String> {
                     return Err(format!(
                         "a view chain bottoms out on {op:?}, not a leaf — \
                          dot operands lower only over leaf tensors"
-                    ))
+                    ));
                 }
             },
             _ => {
                 return Err("a dot operand must be a leaf (or view chain over one), \
                      not a literal"
-                    .into())
+                    .into());
             }
         }
     }
@@ -422,16 +441,28 @@ struct PtrParam {
 /// `float` (the denotations' compute type) and storing through
 /// `store_cast<T>`. See the module doc for the `geom`/`in_ptrs`
 /// contract.
-pub fn emit_contract(c: &Contract) -> String {
+///
+/// Returns `Err` when the `Contract` is degenerate (no dot partials) —
+/// `as_contract` cannot produce one, but the fields are public.
+pub fn emit_contract(c: &Contract) -> Result<String, String> {
+    if c.dots.is_empty() {
+        return Err("a contract needs at least one dot partial".into());
+    }
     let slug = contract_slug(c);
 
     // in_ptrs order == kernel pointer-param order == geom stride-block
     // order.
     let mut ptrs: Vec<PtrParam> = Vec::new();
     let mut geom_names: Vec<String> = Vec::new(); // stride-block entries
+    // geom entries the kernel *divides by* or loops to — packed by the
+    // caller, so the launcher validates them (geom index -> minimum).
+    let mut geom_min: Vec<(usize, i64, &str)> = Vec::new();
     let mut body_parts: Vec<String> = Vec::new();
 
     for (j, d) in c.dots.iter().enumerate() {
+        // geom index of this dot's block lead (klen{j}) — geom[0] is
+        // nout, so block entry `geom_names.len()` lands at geom[1+len].
+        let block0 = geom_names.len();
         match d {
             Dot::Plain { tile, x } => {
                 for (param, ty, doc) in [
@@ -452,10 +483,16 @@ pub fn emit_contract(c: &Contract) -> String {
                         doc,
                     });
                 }
-                geom_names.extend([format!("ak{j}"), format!("an{j}"), format!("kx{j}")]);
+                geom_names.extend([
+                    format!("klen{j}"),
+                    format!("ak{j}"),
+                    format!("an{j}"),
+                    format!("kx{j}"),
+                ]);
+                geom_min.push((1 + block0, 0, "klen"));
                 body_parts.push(format!(
                     r#"  // dot {j}: plain tile[k,n] . x[k]
-  for (long long k = 0; k < klen; ++k) {{
+  for (long long k = 0; k < klen{j}; ++k) {{
     acc += cuda_emit_detail::to_f32(a{j}[k*ak{j} + i*an{j}]) *
            cuda_emit_detail::to_f32(x{j}[k*kx{j}]);
   }}"#
@@ -498,6 +535,7 @@ pub fn emit_contract(c: &Contract) -> String {
                     });
                 }
                 geom_names.extend([
+                    format!("klen{j}"),
                     format!("wk{j}"),
                     format!("wn{j}"),
                     format!("zg{j}"),
@@ -509,6 +547,11 @@ pub fn emit_contract(c: &Contract) -> String {
                     format!("shs{j}"),
                     format!("kx{j}"),
                 ]);
+                // klen >= 0; the group divisors must be >= 1 — the
+                // kernel computes k / zdiv and k / sdiv per element.
+                geom_min.push((1 + block0, 0, "klen"));
+                geom_min.push((1 + block0 + 5, 1, "zdiv"));
+                geom_min.push((1 + block0 + 8, 1, "sdiv"));
                 body_parts.push(format!(
                     r#"  // dot {j}: dequant(unpack_i4(w, shifts), z, s) . x[k]
   //   g = k / div per element — the denotation's repeat_interleave;
@@ -516,9 +559,9 @@ pub fn emit_contract(c: &Contract) -> String {
   {{
     const int shv{j} = sh{j}[(i & 7) * shs{j}];
     const long long wc{j} = i >> 3;
-    for (long long k = 0; k < klen; ++k) {{
+    for (long long k = 0; k < klen{j}; ++k) {{
       const int word{j} = w{j}[k*wk{j} + wc{j}*wn{j}];
-      const int q{j} = (word{j} >> shv{j}) & 0xF;
+      const int q{j} = (word{j} >> (shv{j} & 31)) & 0xF;
       const long long gz{j} = k / zdiv{j};
       const long long gs{j} = k / sdiv{j};
       const float zv{j} = (float)z{j}[gz{j}*zg{j} + i*zn{j}];
@@ -544,18 +587,22 @@ pub fn emit_contract(c: &Contract) -> String {
     }
 
     // -- kernel parameters -------------------------------------------------
-    let mut kparams: Vec<String> = vec!["long long nout".to_string(), "long long klen".to_string()];
+    // No `__restrict__`: `store(body, out)` may write a leaf the body
+    // also reads (in-place store), and distinct leaf names may alias —
+    // the IR carries no alias information, so the kernel must not
+    // promise any.
+    let mut kparams: Vec<String> = vec!["long long nout".to_string()];
     for p in &ptrs {
         let ty = match p.ty {
             PtrTy::T => "const T*",
             PtrTy::I => "const int*",
         };
-        kparams.push(format!("{ty} __restrict__ {}", p.name));
+        kparams.push(format!("{ty} {}", p.name));
     }
     for s in &geom_names {
         kparams.push(format!("long long {s}"));
     }
-    kparams.push("T* __restrict__ out_p".to_string());
+    kparams.push("T* out_p".to_string());
 
     let kbody = format!(
         r#"  // fp32 accumulation: dot/stage/reduce all denote fp32 compute
@@ -570,7 +617,8 @@ pub fn emit_contract(c: &Contract) -> String {
     );
 
     // -- launcher ----------------------------------------------------------
-    // geom indices: 0=nout, 1=klen, then the stride blocks in order.
+    // geom indices: 0=nout, then the per-dot stride blocks (each leads
+    // with its klen) and the per-bias strides, in order.
     let mut cases = String::new();
     for (cname, ty) in [
         ("CUDA_CONTRACT_F32", "float"),
@@ -580,7 +628,7 @@ pub fn emit_contract(c: &Contract) -> String {
         ("CUDA_CONTRACT_I32", "int"),
         ("CUDA_CONTRACT_I64", "long long"),
     ] {
-        let mut args: Vec<String> = vec!["nout".to_string(), "klen".to_string()];
+        let mut args: Vec<String> = vec!["nout".to_string()];
         for (pi, p) in ptrs.iter().enumerate() {
             let cast = match p.ty {
                 PtrTy::T => format!("(const {ty}*)in_ptrs[{pi}]"),
@@ -589,7 +637,7 @@ pub fn emit_contract(c: &Contract) -> String {
             args.push(cast);
         }
         for (gi, s) in geom_names.iter().enumerate() {
-            args.push(format!("geom[{}] /* {s} */", 2 + gi));
+            args.push(format!("geom[{}] /* {s} */", 1 + gi));
         }
         args.push(format!("({ty}*)out_ptr"));
         let arglist = args.join(",\n          ");
@@ -606,31 +654,42 @@ pub fn emit_contract(c: &Contract) -> String {
     let ptr_doc = ptr_order_doc(&ptrs);
     let kcheck = c
         .k_literal
-        .map(|k| format!("  if (klen != {k}) return cudaErrorInvalidValue;\n"))
+        .map(|k| format!("  if (geom[1] != {k}) return cudaErrorInvalidValue;\n"))
         .unwrap_or_default();
+    // caller-packed geom the kernel divides by or loops to — a 0/negative
+    // entry is a caller bug, refused at launch rather than a device fault.
+    let geom_checks: String = geom_min
+        .iter()
+        .map(|(idx, min, name)| {
+            format!("  if (geom[{idx}] < {min}) return cudaErrorInvalidValue; // {name}\n")
+        })
+        .collect();
 
-    format!(
+    Ok(format!(
         r#"// Generated by compile-cuda from a kernel IR contract term
 // (dot / split / reduce — the ADR-0165/0166 qgemv fragment).
 // One fused kernel: grid-stride over the n outputs, float accumulation
 // (the denotations' compute type — dot/stage/reduce are all fp32),
 // store_cast<T> on write. `split`'s k literal is checked against
-// geom's klen at launch. Do not edit: the op tree came from the term.
+// geom's dot-0 klen at launch. Do not edit: the op tree came from the term.
 //
 // Contract for the caller:
 //   * in_ptrs holds the read operands in this order (device pointers):
 {ptr_doc}//   * geom is a long long[] packed by the caller:
-//     [0]=nout, [1]=klen, then per-dot stride blocks
-//     (plain dot: ak,an,kx — k-stride,n-stride of the [k,n] tile and
-//      k-stride of x; dequant dot: wk,wn,zg,zn,zdiv,sg,sn,sdiv,shs,kx)
-//     then per-bias stride (bs). Strides are post-view element
+//     [0]=nout, then per-dot stride blocks — each *leads* with its own
+//     klen (dots in a reduce may contract different k axes):
+//     plain dot: klen,ak,an,kx — the k length, then k-stride and
+//      n-stride of the [k,n] tile and k-stride of x; dequant dot:
+//      klen,wk,wn,zg,zn,zdiv,sg,sn,sdiv,shs,kx — then per-bias stride
+//      (bs). Strides are post-view element
 //     strides — replay the term's transpose/permute views on the
 //     shape/stride pair first (cuda_emit_host::elem_transpose /
 //     elem_permute), then contract_strides2 for rank-2 operands
 //     (tile/w/z/s) and contract_strides1 for rank-1 operands
 //     (biases, shifts). x's k-stride kx comes from the same rank-1
 //     helper on the [k] activation.
-//   * `block` is threads per block (0 -> 256); `stream` may be NULL.
+//   * `block` is threads per block (0 -> 256, must be <= 1024);
+//     `stream` may be NULL.
 //   * dtype selects T for the float-side operands and out; packed w,
 //     shifts and zero z are always read as int (int32 — the op
 //     signatures pin them).
@@ -672,22 +731,31 @@ __device__ __forceinline__ __nv_bfloat16 store_cast<__nv_bfloat16>(
 
 namespace cuda_emit_host {{
 
-// Replay a `transpose` view on a shape/stride pair.
-inline void elem_transpose(
+// Replay a `transpose` view on a shape/stride pair. Returns 0 on
+// success, -1 when rank/d0/d1 are out of range.
+inline int elem_transpose(
     long long* shape, long long* stride, int rank, int d0, int d1)
 {{
+  if (rank < 1 || d0 < 0 || d1 < 0 || d0 >= rank || d1 >= rank)
+    return -1;
   long long ts = shape[d0]; shape[d0] = shape[d1]; shape[d1] = ts;
   long long tt = stride[d0]; stride[d0] = stride[d1]; stride[d1] = tt;
-  (void)rank;
+  return 0;
 }}
 
 // Replay a `permute` view (torch semantics) on a shape/stride pair.
-inline void elem_permute(
+// dims has `rank` entries; rank must be <= 8 and every dim in range —
+// returns 0 on success, -1 otherwise (never reads out of bounds).
+inline int elem_permute(
     long long* shape, long long* stride, int rank, const int* dims)
 {{
+  if (rank < 0 || rank > 8) return -1;
+  for (int i = 0; i < rank; ++i)
+    if (dims[i] < 0 || dims[i] >= rank) return -1;
   long long s[8], t[8];
-  for (int i = 0; i < rank && i < 8; ++i) {{ s[i] = shape[dims[i]]; t[i] = stride[dims[i]]; }}
-  for (int i = 0; i < rank && i < 8; ++i) {{ shape[i] = s[i]; stride[i] = t[i]; }}
+  for (int i = 0; i < rank; ++i) {{ s[i] = shape[dims[i]]; t[i] = stride[dims[i]]; }}
+  for (int i = 0; i < rank; ++i) {{ shape[i] = s[i]; stride[i] = t[i]; }}
+  return 0;
 }}
 
 // Effective (stride[0], stride[1]) of a rank-2 operand — the [k, n]
@@ -745,9 +813,9 @@ extern "C" cudaError_t launch_contract_{slug}(
     cudaStream_t stream)
 {{
   const long long nout = geom[0];
-  const long long klen = geom[1];
-  if (nout <= 0) return cudaSuccess;
-{kcheck}  const unsigned int tb = block ? block : 256u;
+  if (block != 0u && block > 1024u) return cudaErrorInvalidValue;
+{kcheck}{geom_checks}  if (nout <= 0) return cudaSuccess;
+  const unsigned int tb = block ? block : 256u;
   unsigned long long want = ((unsigned long long)nout + tb - 1) / tb;
   const unsigned int grid =
       want > 0x7fffffffull ? 0x7fffffffu : (unsigned int)want;
@@ -764,7 +832,8 @@ extern "C" cudaError_t launch_contract_{slug}(
         kcheck = kcheck,
         cases = cases,
         views_doc = views_doc,
-    )
+        geom_checks = geom_checks,
+    ))
 }
 
 /// Stable kernel/launcher name: op summary + hash of the contract.
@@ -790,6 +859,8 @@ fn contract_slug(c: &Contract) -> String {
             }
         })
         .collect();
+    // cap the cosmetic prefix — the fnv hash keeps the symbol unique
+    let clean: String = clean.chars().take(48).collect();
     clean.trim_matches('_').to_string()
 }
 

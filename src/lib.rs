@@ -27,6 +27,9 @@
 //! doesn't stage), and `stage` outside the contract body. A term that
 //! fits neither fragment is an error, never a stub.
 
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
+
 pub mod codegen;
 pub mod contract;
 pub mod kernel_term;
@@ -35,7 +38,7 @@ pub use codegen::emit;
 pub use compile_triton::as_elementwise;
 pub use compile_triton::term::Node;
 pub use compile_triton::{KernelTerm, TritonEmitter};
-pub use contract::{as_contract, emit_contract, Contract, Dot};
+pub use contract::{Contract, Dot, as_contract, emit_contract};
 pub use kernel_term::CudaEmitter;
 
 /// Compile a parsed term to CUDA C++ source, or say precisely why not.
@@ -45,13 +48,13 @@ pub use kernel_term::CudaEmitter;
 /// fragment. When both refuse, the error names both paths' reasons.
 pub fn compile(node: &Node) -> Result<String, String> {
     match as_elementwise(node) {
-        Ok(e) => Ok(emit(&e)),
+        Ok(e) => emit(&e),
         Err(elem_err) => {
             if node.op() != Some("store") {
                 return Err(elem_err);
             }
             match as_contract(node) {
-                Ok(c) => Ok(emit_contract(&c)),
+                Ok(c) => emit_contract(&c),
                 Err(contract_err) => Err(format!("{elem_err}; contract path: {contract_err}")),
             }
         }

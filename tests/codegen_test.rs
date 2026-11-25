@@ -1,4 +1,5 @@
-use compile_cuda::{as_elementwise, compile, emit, Node};
+use compile_cuda::{Node, as_elementwise, compile, emit};
+use compile_triton::term::{Elementwise, Expr, Lit, Operand};
 
 fn leaf(name: &str) -> String {
     format!(r#"{{"leaf":{{"name":"{name}"}}}}"#)
@@ -14,7 +15,7 @@ fn parse(raw: &str) -> Node {
 
 fn emit_term(body: &str) -> String {
     let e = as_elementwise(&parse(&elem_term(body))).expect("elementwise");
-    emit(&e)
+    emit(&e).expect("a lowered elementwise term emits")
 }
 
 #[test]
@@ -149,6 +150,54 @@ fn kernel_and_launcher_names_are_stable_and_distinct() {
             .unwrap()
             .to_string()
     });
+}
+
+#[test]
+fn emit_refuses_an_op_tag_it_cannot_lower() {
+    // `Expr` is public, so a hand-built `Elementwise` can carry an op
+    // tag `as_elementwise` would never produce — `emit` must name it,
+    // not silently emit the wrong math (the old `_ =>` arms mapped any
+    // unknown unary to silu and any unknown binary to add).
+    for (expr, needle) in [
+        (
+            Expr::Unary("rsqrt", Box::new(Expr::Lit(Lit::Float(2.0)))),
+            "rsqrt",
+        ),
+        (
+            Expr::Binary(
+                "div",
+                Box::new(Expr::Lit(Lit::Int(1))),
+                Box::new(Expr::Lit(Lit::Int(2))),
+            ),
+            "div",
+        ),
+    ] {
+        let e = Elementwise {
+            expr,
+            operands: vec![Operand {
+                name: "a".into(),
+                views: vec![],
+            }],
+            env: vec![("a".into(), "a".into())],
+            out_var: "out".into(),
+            out_nullable: true,
+        };
+        let err = emit(&e).unwrap_err();
+        assert!(err.contains(needle), "{err}");
+    }
+}
+
+#[test]
+fn launcher_validates_block_and_never_promises_restrict() {
+    let src = emit_term(&leaf_body());
+    // block > 1024 is a launch-config error, not a silent clamp
+    assert!(src.contains("block > 1024u"), "{src}");
+    // the IR carries no alias information — no __restrict__ anywhere
+    assert!(!src.contains("__restrict__"), "{src}");
+}
+
+fn leaf_body() -> String {
+    format!(r#"{{"op":"neg","args":[{}]}}"#, leaf("a"))
 }
 
 #[test]

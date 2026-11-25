@@ -33,7 +33,7 @@ use base64::Engine as _;
 use compile_cuda::{CudaEmitter, KernelTerm, TritonEmitter};
 use compile_triton::artifact_name;
 use hnl_tool_codegen::{Change, ContentHash, EmitContext, Emitter};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const GENERATOR_NAME: &str = "mlopt-kernel-lower";
 const GENERATOR_VERSION: &str = "0.1.0dev";
@@ -48,6 +48,18 @@ fn usage() -> ! {
          \x20             [--run-id ID] [--manifest-dir DIR] < term.json"
     );
     std::process::exit(2);
+}
+
+/// Next argv value for `flag`, or a usage error — a flag at end of
+/// argv is malformed input, never a silent default.
+fn arg_value(flag: &str, args: &mut impl Iterator<Item = String>) -> String {
+    match args.next() {
+        Some(v) => v,
+        None => {
+            eprintln!("kernel-lower: {flag} wants a value");
+            usage();
+        }
+    }
 }
 
 /// Provenance run id when the caller doesn't supply one — time+pid,
@@ -171,11 +183,28 @@ fn main() -> std::process::ExitCode {
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
         match flag.as_str() {
-            "--target" => target = args.next(),
-            "--block-n" => block_n = args.next().and_then(|v| v.parse().ok()).unwrap_or(64),
-            "--block-k" => block_k = args.next().and_then(|v| v.parse().ok()).unwrap_or(128),
-            "--run-id" => run_id = args.next(),
-            "--manifest-dir" => manifest_dir = args.next(),
+            "--target" => target = Some(arg_value("--target", &mut args)),
+            "--block-n" | "--block-k" => {
+                let is_n = flag == "--block-n";
+                let raw = arg_value(&flag, &mut args);
+                match raw.parse::<usize>() {
+                    Ok(v) if (1..=1024).contains(&v) => {
+                        if is_n {
+                            block_n = v;
+                        } else {
+                            block_k = v;
+                        }
+                    }
+                    _ => {
+                        eprintln!(
+                            "kernel-lower: {flag} wants a thread count in 1..=1024, got {raw:?}"
+                        );
+                        usage();
+                    }
+                }
+            }
+            "--run-id" => run_id = Some(arg_value("--run-id", &mut args)),
+            "--manifest-dir" => manifest_dir = Some(arg_value("--manifest-dir", &mut args)),
             other => {
                 eprintln!("unknown flag {other}");
                 usage();

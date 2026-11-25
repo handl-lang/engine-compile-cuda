@@ -13,8 +13,8 @@
 //! in this repo, so artifact-level verify remains producer-side
 //! (term-denotation) until one exists.
 
-use compile_triton::kernel_term::artifact_name;
 use compile_triton::KernelTerm;
+use compile_triton::kernel_term::artifact_name;
 use hnl_tool_codegen::{Change, CodegenError, EmitContext, Emitter};
 
 use crate::compile;
