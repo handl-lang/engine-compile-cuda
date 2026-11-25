@@ -1,5 +1,5 @@
 [package]
-name = "compile-cuda"
+name = "tool-compile-cuda"
 version = "0.0.1"
 edition = "2024"
 rust-version = "1.85"
@@ -13,11 +13,11 @@ categories = ["compilers", "science"]
 publish = false
 
 [lib]
-name = "compile_cuda"
+name = "tool_compile_cuda"
 path = "src/lib.rs"
 
 [[bin]]
-name = "compile-cuda"
+name = "tool-compile-cuda"
 path = "src/main.rs"
 
 [[bin]]
@@ -29,7 +29,7 @@ path = "src/bin/kernel-lower.rs"
 # tool-compile-triton main (a01608c), so a git dep resolves — the
 # sibling checkout wins via `[patch]`. No tag exists yet; flip to a tag
 # pin when one is cut.
-compile-triton = { git = "https://github.com/handl-lang/tool-compile-triton", branch = "main" }
+tool-compile-triton = { git = "https://github.com/handl-lang/tool-compile-triton", branch = "main" }
 serde_json = "1"
 base64 = "0.22"
 # Desired-state kernel: `CudaEmitter` implements `Emitter<KernelTerm>`

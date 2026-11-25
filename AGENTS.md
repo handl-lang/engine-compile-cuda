@@ -2,15 +2,15 @@
 
 hnl IR terms → CUDA C++ — lowers a kernel IR `Term` to one templated
 `__global__` kernel plus an `extern "C"` launcher (ADR-0171 fragment).
-Rust 2024, `publish = false` (git-install only), crate `compile-cuda`
-(lib `compile_cuda` + bins `compile-cuda`, `kernel-lower`).
+Rust 2024, `publish = false` (git-install only), crate `tool-compile-cuda`
+(lib `tool_compile_cuda` + bins `tool-compile-cuda`, `kernel-lower`).
 
 ## Layout
 
 | path | role |
 | --- | --- |
 | `src/lib.rs` | crate docs; `compile(node)` — tries `as_elementwise` first, falls through to `as_contract` on `store` refusal, names both errors |
-| `src/main.rs` | `compile-cuda` bin — term JSON on stdin → `.cu` translation unit on stdout |
+| `src/main.rs` | `tool-compile-cuda` bin — term JSON on stdin → `.cu` translation unit on stdout |
 | `src/bin/kernel-lower.rs` | `kernel-lower` bin — `Emitter<KernelTerm>` materialization to a change-set manifest record (PL-004 T-094); `--target triton\|cuda`, `--manifest-dir` for the apply-shim form |
 | `src/kernel_term.rs` | `CudaEmitter` — `impl Emitter<KernelTerm>` for CUDA (`.cu` artifact via `artifact_name`); structural `verify` |
 | `src/codegen.rs` | elementwise/layout emit — `emit(&Elementwise)`; flat grid-stride kernel, `launch_<slug>` dtype dispatch (f32/f64/f16/bf16/i32/i64), `cuda_emit_host::elem_*` helpers |
@@ -21,7 +21,7 @@ Rust 2024, `publish = false` (git-install only), crate `compile-cuda`
 ## Contract
 
 - **Input**: hnl_codec Term JSON — the same `{"Op"/"Arr"/"Const"}` /
-  `dag.program` wire `compile-triton` parses (`compile_triton::term::Node`).
+  `dag.program` wire `tool-compile-triton` parses (`tool_compile_triton::term::Node`).
 - **Output**: one self-contained CUDA C++ TU — templated kernel,
   `extern "C" launch_<slug>(dtype, in_ptrs, out_ptr, geom, block,
   stream)`, six dtype instantiations. `geom` packs the broadcast canon
@@ -44,7 +44,7 @@ Rust 2024, `publish = false` (git-install only), crate `compile-cuda`
 
 ## Conventions
 
-- `compile-triton` supplies `KernelTerm`/`Node`/`as_elementwise` and
+- `tool-compile-triton` supplies `KernelTerm`/`Node`/`as_elementwise` and
   `artifact_name`; `hnl-tool-codegen` supplies `Emitter`/`Change`/
   `EmitContext`/`ContentHash`. Both are git deps on `branch = "main"`
   — no tag pins yet.

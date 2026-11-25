@@ -219,7 +219,7 @@ name = "handl-value"
 version = "0.1.0"
 
 [[patch.unused]]
-name = "compile-cuda"
+name = "tool-compile-cuda"
 version = "0.0.1"
 
 [[patch.unused]]
@@ -451,7 +451,7 @@ name = "handl-kit-prelude-lang"
 version = "0.1.0"
 
 [[patch.unused]]
-name = "compile-triton"
+name = "tool-compile-triton"
 version = "0.0.1"
 
 [[patch.unused]]

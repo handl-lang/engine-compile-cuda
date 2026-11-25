@@ -2,7 +2,7 @@
 
 use std::io::Read;
 
-use compile_cuda::{Node, compile};
+use tool_compile_cuda::{Node, compile};
 
 fn main() -> std::process::ExitCode {
     let mut args = std::env::args().skip(1);

@@ -1,11 +1,11 @@
 //! `Emitter<KernelTerm>` for the CUDA backend (PL-004 T-094).
 //!
-//! The IR is [`compile_triton::KernelTerm`] — the `lib-kernel-ir` wire
-//! term, defined next to [`compile_triton::Node`] because that is where
+//! The IR is [`tool_compile_triton::KernelTerm`] — the `lib-kernel-ir` wire
+//! term, defined next to [`tool_compile_triton::Node`] because that is where
 //! the wire format is parsed. `impl Emitter<KernelTerm>` can live here
 //! (the orphan rule only needs a local *self* type): [`CudaEmitter`]
 //! is local, the trait and the IR are foreign. This mirrors how
-//! `compile-cuda` already reuses `compile_triton::term::Node` for its
+//! `tool-compile-cuda` already reuses `tool_compile_triton::term::Node` for its
 //! `compile()` entry point.
 //!
 //! `Emitter::verify` stays structural, same ceiling as the Triton
@@ -13,9 +13,9 @@
 //! in this repo, so artifact-level verify remains producer-side
 //! (term-denotation) until one exists.
 
-use compile_triton::KernelTerm;
-use compile_triton::kernel_term::artifact_name;
 use hnl_tool_codegen::{Change, CodegenError, EmitContext, Emitter};
+use tool_compile_triton::KernelTerm;
+use tool_compile_triton::kernel_term::artifact_name;
 
 use crate::compile;
 
@@ -23,7 +23,7 @@ use crate::compile;
 ///
 /// Stateless — `compile()` picks between the elementwise/layout
 /// fragment and the contract fragment; both refusals are named in the
-/// `Emit` error, verbatim, exactly like the `compile-cuda` CLI.
+/// `Emit` error, verbatim, exactly like the `tool-compile-cuda` CLI.
 #[derive(Debug, Clone, Default)]
 pub struct CudaEmitter;
 
@@ -59,7 +59,7 @@ impl Emitter<KernelTerm> for CudaEmitter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use compile_triton::TritonEmitter;
+    use tool_compile_triton::TritonEmitter;
 
     const ELEMENTWISE: &str = r#"{"op":"store","args":[{"op":"neg","args":[{"leaf":{"name":"x"}}]},
             {"leaf":{"name":"out"}}]}"#;

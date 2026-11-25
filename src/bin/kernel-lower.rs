@@ -30,10 +30,10 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
-use compile_cuda::{CudaEmitter, KernelTerm, TritonEmitter};
-use compile_triton::artifact_name;
 use hnl_tool_codegen::{Change, ContentHash, EmitContext, Emitter};
 use serde_json::{Value, json};
+use tool_compile_cuda::{CudaEmitter, KernelTerm, TritonEmitter};
+use tool_compile_triton::artifact_name;
 
 const GENERATOR_NAME: &str = "mlopt-kernel-lower";
 const GENERATOR_VERSION: &str = "0.1.0dev";
