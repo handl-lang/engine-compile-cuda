@@ -62,8 +62,7 @@ Tests are structural (kernel signature, launch config, dtype dispatch,
 no unsupported op silently dropped) plus an `nvcc -c` syntax check that
 skips honestly when no CUDA toolkit is present. No GPU execution in CI.
 `xtask/` provides the gate tasks (`fmt`, `clippy`, `test`, `doc`, `check`,
-`gate`); `ci.sh` is the same gate entry for the bupha shell runner. Deps
-are git deps on `branch = "main"`; locally the workspace-root
+`gate`). Deps are git deps on `branch = "main"`; locally the workspace-root
 `.cargo/config.toml` patches them to sibling checkouts (dev-only, never
 committed).
 
